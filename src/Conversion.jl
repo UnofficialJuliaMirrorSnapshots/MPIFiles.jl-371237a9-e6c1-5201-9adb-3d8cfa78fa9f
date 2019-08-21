@@ -35,7 +35,11 @@ function loadDataset(f::MPIFile; frames=1:acqNumFrames(f), applyCalibPostprocess
         setparam!(params, "measIsBGFrame",
           cat(zeros(Bool,acqNumFGFrames(f)),ones(Bool,acqNumBGFrames(f)), dims=1))
 
-        setparam!(params, "calibSNR", calculateSystemMatrixSNR(f, data))
+        try
+          setparam!(params, "calibSNR", calibSNR(f))
+        catch
+          setparam!(params, "calibSNR", calculateSystemMatrixSNR(f, data))
+        end
     end
   end
 
@@ -45,7 +49,7 @@ function loadDataset(f::MPIFile; frames=1:acqNumFrames(f), applyCalibPostprocess
   return params
 end
 
-const defaultParams =[:version, :uuid, :time, :dfStrength, :acqGradient, :studyName, :studyNumber, :studyUuid, :studyDescription,
+const defaultParams =[:version, :uuid, :time, :dfStrength, :acqGradient, :studyName, :studyNumber, :studyUuid, :studyTime, :studyDescription,
           :experimentName, :experimentNumber, :experimentUuid, :experimentDescription,
           :experimentSubject,
           :experimentIsSimulation, :experimentIsCalibration,
@@ -81,10 +85,13 @@ end
 
 function loadCalibParams(f, params = Dict{String,Any}())
   if experimentIsCalibration(f)
-    for op in [:calibSNR, :calibFov, :calibFovCenter,
+    for op in [:calibFov, :calibFovCenter,
                :calibSize, :calibOrder, :calibPositions, :calibOffsetField,
              :calibDeltaSampleSize, :calibMethod]
       setparam!(params, string(op), eval(op)(f))
+    end
+    if !haskey(params, "calibSNR")
+      setparam!(params, "calibSNR", calibSNR(f))
     end
   end
   return params
@@ -194,6 +201,7 @@ function compressCalibMDF(filenameOut::String, f::MPIFile, idx::Vector{Int64};
   params = loadMetadata(f)
   loadMeasParams(f, params, skipMeasData = true)
   loadCalibParams(f, params)
+  params["calibSNR"] = calibSNR(f)
   loadRecoParams(f, params)
 
   data = systemMatrixWithBG(f, idx)
@@ -266,6 +274,9 @@ function saveasMDF(file::HDF5File, params::Dict)
   end
   write(file, "/study/uuid", string(studyUuid))
   write(file, "/study/description", get(params,"studyDescription","n.a."))
+  if hasKeyAndValue(params,"studyTime")
+    write(file, "/study/time", string(params["studyTime"]))
+  end
 
   # experiment parameters
   write(file, "/experiment/name", get(params,"experimentName","default") )

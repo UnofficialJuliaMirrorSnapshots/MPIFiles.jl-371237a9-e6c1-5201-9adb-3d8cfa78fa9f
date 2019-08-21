@@ -1,11 +1,9 @@
-import FileIO: save
-
 export Study, Experiment, Reconstruction, Visualization, DatasetStore,
        studydir, BrukerDatasetStore, BrukerStore, getStudy, getStudies, getExperiment,
        getExperiments, MDFDatasetStore, MDFStore, addReco, getReco, getRecons, findReco,
        findBrukerFiles, id, getVisus, getVisuPath, remove, addStudy, getNewExperimentNum,
        exportToMDFStore, generateSFDatabase, loadSFDatabase, addVisu, readonly, getNewCalibNum,
-       calibdir, try_chmod
+       calibdir, try_chmod, getMDFStudyFolderName
 
 ########################################
 
@@ -15,8 +13,9 @@ struct Study
   path::String
   name::String
   subject::String
-  date::String
+  date::DateTime
 end
+
 
 id(s::Study) = s.name
 
@@ -79,7 +78,7 @@ struct MDFDatasetStore <: DatasetStore
   end
 end
 
-const MDFStore = MDFDatasetStore("/opt/data")
+const MDFStore = MDFDatasetStore("/opt/data/Bruker")
 
 ### generic functions ###
 function ishidden(filename::AbstractString)
@@ -144,30 +143,33 @@ function remove(exp::Experiment)
   end
 end
 
-function exportToMDFStore(d::BrukerDatasetStore, s::Study, e::Experiment, mdf::MDFDatasetStore, freqSpace=false)
+function exportToMDFStore(d::BrukerDatasetStore,path::String, mdf::MDFDatasetStore)
+  # pretend to be a measurement to enforce loading data from time domain in case post processed data is not availible
+  b = BrukerFile(path,isCalib=false)
+  exportpath = ""
 
-  name = s.name*"_MDF"
-  path = joinpath( studydir(mdf), name)
-  subject = s.subject
-  date = ""
-
-  newStudy = Study(path,name,subject,date)
-
-  addStudy(mdf, newStudy)
-  expNum = getNewExperimentNum(mdf, newStudy)
-
-  b = BrukerFile(e.path)
-
-  if experimentIsCalibration(b)
+  if MPIFiles._iscalib(path)
     calibNum = getNewCalibNum(mdf)
-    #saveasMDF( joinpath(calibdir(mdf),string(calibNum)*".mdf"), b, deltaSampleSize=[0.002,0.002,0.001]) #Fixme
-    saveasMDF( joinpath(calibdir(mdf),string(calibNum)*".mdf"),
-               b, deltaSampleSize=[0.0,0.0,0.0], bgcorrection=true ) #Fixme
+    exportpath = joinpath(calibdir(mdf),string(calibNum)*".mdf")
+    saveasMDF(exportpath,b,applyCalibPostprocessing=true)
   else
-    saveasMDF( joinpath(studydir(mdf),newStudy.name,string(expNum)*".mdf"), b)
+    s = getStudy(d,string(split(path,"/")[end-1]))
+    name = s.name*"_MDF"
+    mdfPath = joinpath( studydir(mdf), name)
+    subject = s.subject
+    date = s.date
+    mdfStudy = Study(mdfPath,name,subject,date)
+    addStudy(mdf,mdfStudy)
+    expNum = getNewExperimentNum(mdf, mdfStudy)
+    exportpath = joinpath(studydir(mdf),mdfStudy.name,string(expNum)*".mdf")
+    saveasMDF(exportpath, b)
   end
 
+  return exportpath
 end
+
+exportToMDFStore(d::BrukerDatasetStore, s::Study, e::Experiment, mdf::MDFDatasetStore) = exportToMDFStore(d,BrukerFile(e.path),mdf)
+
 
 ###  Implementations of abstract interfaces ###
 
@@ -183,20 +185,26 @@ function getStudy(d::BrukerDatasetStore, studyfolder::String)
   studypath = joinpath(d.path,studyfolder)
   if !ishidden(studypath) && isdir(studypath)
     w = split(studyfolder,'_')
-    if length(w) >= 5 # only these can be study folders
-      w_ = w[1:end-2]
-      date = w[1]
-      date = string(date[1:4],"/",date[5:6],"/",date[7:8])
+    if length(w) >= 5 && length(w[1])==8 # only these can be study folders
+      # w_ = w[1:end-2]
+      # date = w[1]
+      # date = string(date[1:4],"/",date[5:6],"/",date[7:8])
 
+      w = split(studyfolder,'_')
+      dateStr = w[1]
+      timeStr = w[2]
+      date = DateTime(string(dateStr[1:4],"-",dateStr[5:6],"-",dateStr[7:8],"T",
+			   timeStr[1:2],":",timeStr[3:4],":",timeStr[5:6]))
 
       j = JcampdxFile()
       subjfile = string(studypath,"/subject")
       if isfile(subjfile)
         read(j,string(studypath,"/subject"),maxEntries=14) #magic number...
-        name = string(latin1toutf8(j["SUBJECT_name_string"]),
-                      "_",latin1toutf8(j["SUBJECT_study_name"]),
-                      "_",latin1toutf8(j["SUBJECT_study_nr"]))
-        subject = latin1toutf8(j["SUBJECT_name_string"])
+        name = latin1toutf8(j["SUBJECT_study_name"])
+        # name = string(latin1toutf8(j["SUBJECT_name_string"]),
+        #              "_",latin1toutf8(j["SUBJECT_study_name"]),
+        #              "_",latin1toutf8(j["SUBJECT_study_nr"]))
+        subject = latin1toutf8(j["SUBJECT_id"])*latin1toutf8(j["SUBJECT_name_string"])
       else
         # Workaround if no subject file is present => use first dataset
         # and derive the study from the Brukerfile
@@ -226,69 +234,97 @@ end
 function getStudy(d::MDFDatasetStore, studyfolder::String)
   study = nothing
   studypath = joinpath( studydir(d), studyfolder)
-  name = studyfolder
+  if length(studyfolder) >= 15 &&
+     isascii(studyfolder[1:15]) &&
+     all([tryparse(Int,studyfolder[l:l])!=nothing for l=union(1:8,10:15)])
+
+    w = split(studyfolder,'_')
+    dateStr = w[1]
+    timeStr = w[2]
+    date = DateTime(string(dateStr[1:4],"-",dateStr[5:6],"-",dateStr[7:8],"T",
+			   timeStr[1:2],":",timeStr[3:4],":",timeStr[5:6]))
+    name = join(w[3:end])
+  else
+    date = Dates.unix2datetime(stat(studypath).mtime)
+    name = studyfolder
+  end
+
   subject = ""
-  date = string(split(string(Dates.unix2datetime(stat(studypath).mtime)),"T")[1])
   study = Study(studypath, name, subject, date )
   return study
 end
 
+getMDFStudyFolderName(study::Study) = getMDFStudyFolderName(study.name, study.date)
+
+function getMDFStudyFolderName(name::String, date::DateTime)
+  return string(split(string(date),"T")[1][union(1:4,6:7,9:10)],"_",
+                split(string(date),"T")[2][union(1:2,4:5,7:8)],"_",name)
+end
+
 function addStudy(d::MDFDatasetStore, study::Study)
-  studypath = joinpath( studydir(d), study.name)
+  studypath = joinpath( studydir(d), getMDFStudyFolderName(study))
   mkpath(studypath)
   try_chmod(studypath, 0o777, recursive=true)
 
   nothing
 end
 
-function findBrukerFiles(path::AbstractString)
-  files = readdir(path)
-
-  bfiles = String[]
-
-  for file in files
-    if isdir(joinpath(path,file))
-     try
-      if isfile(joinpath(path,file,"acqp"))
-        push!(bfiles, joinpath(path,file))
-      else
-        rfiles = findBrukerFiles(joinpath(path,file))
-        if rfiles != nothing && length(rfiles) > 0
-          push!(bfiles, rfiles...)
-        end
+@static if Sys.isunix()
+  function findBrukerFiles(path::AbstractString, mindepth::Int=1, maxdepth::Int=2)
+    candidatePaths = split(read(`find $path -maxdepth $maxdepth -mindepth $mindepth -type d`,String),"\n")[1:end-1]
+    mask = zeros(Bool,length(candidatePaths))
+    for (i,candidatePath) in enumerate(candidatePaths)
+      if isfile(joinpath(candidatePath,"acqp"))
+        mask[i] = true
       end
-     catch
-      continue
-     end
     end
+    return String.(candidatePaths[mask])
   end
-  bfiles
+else
+  function findBrukerFiles(path::AbstractString)
+    files = readdir(path)
+    bfiles = String[]
+    for file in files
+      if isdir(joinpath(path,file))
+       try
+        if isfile(joinpath(path,file,"acqp"))
+          push!(bfiles, joinpath(path,file))
+        else
+          rfiles = findBrukerFiles(joinpath(path,file))
+          if rfiles != nothing && length(rfiles) > 0
+            push!(bfiles, rfiles...)
+          end
+        end
+       catch
+        continue
+       end
+      end
+    end
+  return bfiles
+  end
 end
 
 function findSFFiles(d::BrukerDatasetStore)
   studies = readdir(d.path)
-
   bfiles = String[]
 
   for study in studies
     studypath = joinpath(d.path,study)
-    if isdir(studypath) && study[1] != '.'
+    if isdir(studypath)
       experiments = readdir(studypath)
       for exp in experiments
         path = joinpath(d.path,study,exp)
-        if isdir(path) && exp[1] != '.'
-          if isfile(joinpath(path,"pdata","1","systemMatrix"))
-            push!(bfiles, path)
-          end
+        if _iscalib(path)
+          push!(bfiles, path)
         end
       end
     end
   end
   BrukerMDFSFs = readdir(joinpath(d.path,"MDF_SFs/"))
   for BrukerMDFSF in BrukerMDFSFs
-    push!(bfiles,joinpath(d.path,"MDF_SFs/",BrukerMDFSF)) 
+    push!(bfiles,joinpath(d.path,"MDF_SFs/",BrukerMDFSF))
   end
-  bfiles
+  return bfiles
 end
 
 function findSFFiles(d::MDFDatasetStore)
@@ -498,7 +534,7 @@ end
 ####### Reconstruction Store MDF ###################
 
 function getReco(d::MDFDatasetStore, study::Study, exp::Experiment, recoNum::Int64)
-  path = joinpath(d.path, "reconstructions", id(study), string(exp.num), string(recoNum))
+  path = joinpath(d.path, "reconstructions", getMDFStudyFolderName(study), string(exp.num), string(recoNum))
   filename = path*".mdf"
   if !isfile(filename)
     filename = path*".hdf"
@@ -540,7 +576,7 @@ end
 # The following function is certainly not ideal when considering a "getReco" scenario
 function addReco(d::MDFDatasetStore, study::Study, exp::Experiment, image)
 
-  outputpath = joinpath(d.path, "reconstructions", id(study), string(exp.num))
+  outputpath = joinpath(d.path, "reconstructions", getMDFStudyFolderName(study), string(exp.num))
   # create data directory
   mkpath(outputpath)
   try_chmod(outputpath, 0o777, recursive=true)
@@ -600,7 +636,7 @@ function getRecons(d::MDFDatasetStore, study::Study, exp::Experiment)
 
   recons = Reconstruction[]
 
-  datadir = joinpath(d.path, "reconstructions", id(study), string(exp.num))
+  datadir = joinpath(d.path, "reconstructions", getMDFStudyFolderName(study), string(exp.num))
 
   if isdir(datadir)
     files = readdir(datadir)
@@ -634,7 +670,8 @@ end
 
 function getVisu(d::MDFDatasetStore, study::Study, exp::Experiment, reco::Reconstruction, numVisu)
 
-  filename = joinpath(d.path, "reconstructions", id(study), string(exp.num), string(reco.num)*".visu")
+  filename = joinpath(d.path, "reconstructions", getMDFStudyFolderName(study),
+			       string(exp.num), string(reco.num)*".visu")
 
   if isfile(filename)
 
@@ -653,7 +690,8 @@ function getVisus(d::MDFDatasetStore, study::Study, exp::Experiment, reco::Recon
 
   visus = Visualization[]
 
-  filename = joinpath(d.path, "reconstructions", id(study), string(exp.num), string(reco.num)*".visu")
+  filename = joinpath(d.path, "reconstructions", getMDFStudyFolderName(study), string(exp.num),
+			      string(reco.num)*".visu")
 
   if isfile(filename)
 
@@ -694,7 +732,8 @@ end
 
 function addVisu(d::MDFDatasetStore, study::Study, exp::Experiment, reco::Reconstruction, visuParams)
 
-  filename = joinpath(d.path, "reconstructions", id(study), string(exp.num), string(reco.num)*".visu" )
+  filename = joinpath(d.path, "reconstructions", getMDFStudyFolderName(study), string(exp.num),
+			      string(reco.num)*".visu" )
 
   visus = getVisus(d, study, exp, reco)
 

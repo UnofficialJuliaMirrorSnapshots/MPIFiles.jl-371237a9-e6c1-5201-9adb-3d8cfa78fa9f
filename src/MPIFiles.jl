@@ -1,28 +1,31 @@
 module MPIFiles
 
-using Reexport
-
-using Compat
-@reexport using LinearAlgebra
-@reexport using Statistics
-@reexport using FFTW
-@reexport using Random
-using Compat.UUIDs
-using Graphics: @mustimplement
-@reexport using ImageAxes
 using AxisArrays
 const axes = Base.axes
-@reexport using ImageMetadata
-@reexport using Unitful
+using Graphics: @mustimplement
+using HDF5
 using Interpolations
-@reexport using Mmap
+using RegularizedLeastSquares
+using Reexport
+using UUIDs
+
 @reexport using Dates
 @reexport using DelimitedFiles
-using HDF5
-using RegularizedLeastSquares
+@reexport using FFTW
+@reexport using ImageAxes
+@reexport using ImageMetadata
+@reexport using LinearAlgebra
+@reexport using Random
+@reexport using Mmap
+@reexport using Statistics
+@reexport using Unitful
 
+### global import list ###
 
-import Base: ndims, time, show, getindex
+import Base: convert, get, getindex, haskey, iterate, length, ndims, range, read, show, time, write
+import FileIO: save
+import HDF5: h5read
+import Interpolations: interpolate
 
 ### export list ###
 
@@ -32,7 +35,7 @@ export MPIFile
 export version, uuid
 
 # study parameters
-export studyName, studyNumber, studyUuid, studyDescription
+export studyName, studyNumber, studyUuid, studyDescription, studyTime
 
 # experiment parameters
 export experimentName, experimentNumber, experimentUuid, experimentDescription, experimentSubject,
@@ -92,6 +95,7 @@ abstract type MPIFile end
 @mustimplement studyNumber(f::MPIFile)
 @mustimplement studyUuid(f::MPIFile)
 @mustimplement studyDescription(f::MPIFile)
+@mustimplement studyTime(f::MPIFile)
 
 # experiment parameters
 @mustimplement experimentName(f::MPIFile)
@@ -207,7 +211,12 @@ function MPIFile(filename::AbstractString; kargs...)
       return IMTFile(filename, file; kargs...)
     end
   else
-    return BrukerFile(filename; kargs...)
+    if isfile(joinpath(filename,"mdf"))
+      filenameMDF = readline(joinpath(filename,"mdf"))
+      return MDFFile(filenameMDF)
+    else
+      return BrukerFile(filename; kargs...)
+    end
   end
 end
 

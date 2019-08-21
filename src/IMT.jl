@@ -1,7 +1,3 @@
-using HDF5
-
-import HDF5: h5read
-
 export IMTFile, IMTFileCalib, IMTFileMeas, addTrailingSingleton
 
 abstract type IMTFile <: MPIFile end
@@ -81,6 +77,7 @@ studyName(f::IMTFile) = "n.a."
 studyNumber(f::IMTFile) = 0
 studyUuid(f::IMTFile) = uuid4()
 studyDescription(f::IMTFile) = "n.a."
+studyTime(f::IMTFile) = nothing
 
 # experiment parameters
 experimentName(f::IMTFile) = "n.a."

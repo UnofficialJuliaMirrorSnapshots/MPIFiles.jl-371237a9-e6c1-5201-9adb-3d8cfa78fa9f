@@ -8,8 +8,6 @@ fnMeasV2 = "measurement_V2.mdf"
 fnSMV1 = "systemMatrix_V1.mdf"
 fnSMV2 = "systemMatrix_V2.mdf"
 fnSMV3 = "systemMatrix_V3.mdf"
-fnSMV4 = "systemMatrix_V4.mdf"
-fnSMV5 = "systemMatrix_V5.mdf"
 fnSM1DV1 = "systemMatrix1D_V1.mdf"
 fnSM1DV2 = "systemMatrix1D_V2.mdf"
 
@@ -52,16 +50,19 @@ mdfv2 = MPIFile(fnMeasV2)
 
 for mdf in (measBruker,mdfv2)
   @info "Test $mdf"
-  @test studyName(mdf) == "Wuerfelphantom_Wuerfelphantom_1"
+  @test studyName(mdf) == "Wuerfelphantom"
   @test studyNumber(mdf) == 1
   @test studyDescription(mdf) == "n.a."
+  @test studyTime(mdf) == DateTime( "2015-09-15T10:21:10.992" )
+  @test studyUuid(mdf) == UUID("fe9635e0-7cfc-44eb-9f5a-585013a2cb51")
 
   @test experimentName(mdf) == "fuenf (E18)"
   @test experimentNumber(mdf) == 18
   @test experimentDescription(mdf) == "fuenf (E18)"
-  @test experimentSubject(mdf) == "Wuerfelphantom"
+  @test experimentSubject(mdf) == "WuerfelphantomWuerfelphantom"
   @test experimentIsSimulation(mdf) == false
   @test experimentIsCalibration(mdf) == false
+  @test experimentUuid(mdf) == UUID("ef2110b5-cce8-4ca6-b041-38ea01254c47")
 
   @test scannerFacility(mdf) == "Universitätsklinikum Hamburg Eppendorf"
   @test scannerOperator(mdf) == "nmrsu"
@@ -143,7 +144,8 @@ saveasMDF(fnSMV3, smBrukerPretendToBeMeas, applyCalibPostprocessing=true)
 smv3 = MPIFile(fnSMV3)
 @test typeof(smv3) == MDFFileV2
 
-
+# Bruker specific test
+@test rawDataLengthConsistent(smBruker)
 
 for sm in (smBruker,smv2,smv3)
   @info "Test $sm"
@@ -171,6 +173,17 @@ for sm in (smBruker,smv2,smv3)
   @test size(getSystemMatrix(sm,1:10)) == (1936,10)
   @test size(getSystemMatrix(sm,1:10,loadasreal=true)) == (1936,20)
   @test size(getSystemMatrix(sm,1:10,bgCorrection=true)) == (1936,10)
+  # test on the data level if the conversion was successfull
+  SNRThresh = 2
+  freq = filterFrequencies(smBruker,SNRThresh=SNRThresh)
+  SBruker = getSystemMatrix(smBruker,frequencies=freq)
+  S = getSystemMatrix(sm,frequencies=freq)
+  relativeDeviation = zeros(Float32,length(freq))
+  for f in 1:length(freq)
+    relativeDeviation[f] = norm(SBruker[:,f]-S[:,f])/norm(SBruker[:,f])
+  end
+  # test if relative deviation for most of the frequency components is below 0.003
+  @test quantile(relativeDeviation,0.95)<0.003
 end
 
 # Next test checks if the cached system matrix is the same as the one loaded
@@ -182,33 +195,6 @@ S_loadedfromraw = getMeasurementsFD(smBrukerPretendToBeMeas,
 S_loadedfromproc = systemMatrix(smBruker)
 
 @test norm(vec(S_loadedfromraw-S_loadedfromproc)) / norm(vec(S_loadedfromproc)) < 1e-6
-
-# Compression of calib files
-
-# We are toggeling between smBruker and smv2 to check that both MDF and BrukerFile work
-
-compressCalibMDF(fnSMV4, smv2, SNRThresh=4.0)
-smv4 = MPIFile(fnSMV4)
-@test size(calibSNR(smv4), 1) == 110
-@test length(filterFrequencies(smv4)) == 110*3
-@test length(filterFrequencies(smv4, SNRThresh=4.0)) == 194
-
-@test size(measData(smv4)) == (1959, 110, 3, 1)
-
-freq = filterFrequencies(smv4, SNRThresh=4.0)
-S1 = getSystemMatrix(smv4, freq)
-@test size(S1)  == (1936,194)
-
-S2 = getSystemMatrix(smv2, freq)
-@test S1  == S2
-
-# now with basis transformation
-compressCalibMDF(fnSMV5, smBruker, SNRThresh=4.0, basisTrafoRedFactor=0.2)
-smv5 = MPIFile(fnSMV5)
-S1 = getSystemMatrix(smv5, freq)
-
-@test norm(S1.-S2) / norm(S2) < 0.05 #less than 5% error
-
 
 
 # Calibration file 1D

@@ -1,6 +1,7 @@
 include("Jcampdx.jl")
 
-export BrukerFile, BrukerFileMeas, BrukerFileCalib, BrukerFileFast, latin1toutf8, sfPath
+export BrukerFile, BrukerFileMeas, BrukerFileCalib, BrukerFileFast, latin1toutf8, 
+       sfPath, rawDataLengthConsistent
 
 function latin1toutf8(str::AbstractString)
   buff = Char[]
@@ -44,7 +45,21 @@ mutable struct BrukerFileCalib <: BrukerFile
   maxEntriesAcqp
 end
 
-_iscalib(path::String) = isfile(joinpath(path,"pdata", "1", "systemMatrix"))
+function _iscalib(path::AbstractString)
+    calib = false
+    acqpPath = joinpath(path,"acqp")
+    if isfile(acqpPath)
+        open(acqpPath, "r") do io
+            for line in eachline(io)
+                if !isnothing(findfirst("MPICalibration",line))
+                    calib = true
+                    break
+                end
+            end
+        end
+    end
+    return calib
+end
 
 function BrukerFile(path::String; isCalib=_iscalib(path), maxEntriesAcqp=2000)
   params = JcampdxFile()
@@ -82,7 +97,8 @@ function getindex(b::BrukerFile, parameter)#::String
          parameter[1:4] == "Visu"
     visupath = joinpath(b.path, "visu_pars")
     if isfile(visupath)
-      keylist = ["VisuStudyId","VisuStudyNumber","VisuExperimentNumber","VisuSubjectName"]
+      keylist = ["VisuStudyId","VisuStudyNumber","VisuExperimentNumber",
+		 "VisuSubjectId","VisuSubjectName","VisuStudyDate", "VisuUid","VisuStudyUid"]
       read(b.params, visupath,keylist)
       b.visupars_globalRead = true
     end
@@ -133,23 +149,36 @@ selectedReceivers(b::BrukerFile) = b["ACQ_ReceiverSelect"] .== "Yes"
 
 # general parameters
 version(b::BrukerFile) = nothing
-uuid(b::BrukerFile) = nothing #str2uuid(b["VisuUid"])
+uuid(b::BrukerFile) = nothing
 time(b::BrukerFile) = nothing
 
 # study parameters
-studyName(b::BrukerFile) = string(experimentSubject(b),"_",
+studyName(b::BrukerFile) = latin1toutf8(b["VisuStudyId"])
+# old study name
+studyNameOld(b::BrukerFile) = string(experimentSubject(b),"_",
                                   latin1toutf8(b["VisuStudyId"]),"_",
                                   b["VisuStudyNumber"])
 studyNumber(b::BrukerFile) = parse(Int64,b["VisuStudyNumber"])
-studyUuid(b::BrukerFile) = nothing #str2uuid(b["VisuUid"])
+function studyUuid(b::BrukerFile)
+  rng = MersenneTwister(hash(b["VisuStudyUid"])) # use VisuStudyUid as seed to generate uuid4
+  return uuid4(rng)	
+end
 studyDescription(b::BrukerFile) = "n.a."
+function studyTime(b::BrukerFile)
+  m = match(r"<(.+)\+",b["VisuStudyDate"])
+  timeString = replace(m.captures[1],"," => ".")
+  return DateTime( timeString )
+end
 
 # study parameters
 experimentName(b::BrukerFile) = latin1toutf8(b["ACQ_scan_name"])
 experimentNumber(b::BrukerFile) = parse(Int64,b["VisuExperimentNumber"])
-experimentUuid(b::BrukerFile) = nothing #str2uuid(b["VisuUid"])
+function experimentUuid(b::BrukerFile)
+  rng = MersenneTwister(hash(b["VisuUid"])) # use VisuUid as seed to generate uuid4
+  return uuid4(rng)	
+end
 experimentDescription(b::BrukerFile) = latin1toutf8(b["ACQ_scan_name"])
-experimentSubject(b::BrukerFile) = latin1toutf8(b["VisuSubjectName"])
+experimentSubject(b::BrukerFile) = latin1toutf8(b["VisuSubjectId"])*latin1toutf8(b["VisuSubjectName"])
 experimentIsSimulation(b::BrukerFile) = false
 experimentIsCalibration(b::BrukerFile) = _iscalib(b.path)
 experimentHasProcessing(b::BrukerFile) = experimentIsCalibration(b)
@@ -196,9 +225,11 @@ function acqNumFrames(b::BrukerFileMeas)
   M = Int64(b["ACQ_jobs"][1][8])
   return div(M,acqNumPeriodsPerFrame(b))
 end
+
 function acqNumFrames(b::BrukerFileCalib)
   M = parse(Int64,b["PVM_MPI_NrCalibrationScans"])
-  A = parse(Int64,b["PVM_MPI_NrBackgroundMeasurementCalibrationAdditionalScans"])
+  A_ = b["PVM_MPI_NrBackgroundMeasurementCalibrationAdditionalScans"]
+  A = (A_ == "") ? 0 : parse(Int64, A_)
   return div(M-A,acqNumPeriodsPerFrame(b))
 end
 
@@ -220,11 +251,15 @@ function acqNumBGFrames(b::BrukerFile)
   n = b["PVM_MPI_NrBackgroundMeasurementCalibrationAllScans"]
   a = b["PVM_MPI_NrBackgroundMeasurementCalibrationAdditionalScans"]
   if n == ""
-    return 0
-  else
-    return parse(Int64,n)-parse(Int64,a)
+    n = "0"
   end
+  if a == ""
+    a = "0"
+  end
+    
+  return parse(Int64,n)-parse(Int64,a)
 end
+
 function acqGradient(b::BrukerFile)
   G1::Float64 = parse(Float64,b["ACQ_MPI_selection_field_gradient"])
   G2 = Matrix(Diagonal([-0.5;-0.5;1.0])) .* G1
@@ -284,6 +319,25 @@ rxDataConversionFactor(b::BrukerFileMeas) =
                  repeat([1.0/acqNumAverages(b), 0.0], outer=(1,rxNumChannels(b)))
 rxDataConversionFactor(b::BrukerFileCalib) =
                  repeat([1.0, 0.0], outer=(1,rxNumChannels(b)))
+
+function rawDataLengthConsistent(b::BrukerFile)
+  dataFilename = joinpath(b.path,"rawdata.job0")
+  dType = acqNumAverages(b) == 1 ? Int16 : Int32
+
+  # We derive numFrames from ACQ_jobs, since calibration files
+  # are a bit longer than our acqNumFrames function reports
+  # Bruker is padding the file for later processing
+  numFrames = Int64(b["ACQ_jobs"][1][8])
+
+  N = rxNumSamplingPoints(b)*numSubPeriods(b)*rxNumChannels(b)*
+      acqNumPeriodsPerFrame(b)*numFrames*sizeof(dType)
+
+  M = filesize(dataFilename)
+  if N != M
+    @show N M
+  end
+  return N == M
+end
 
 function measData(b::BrukerFileMeas, frames=1:acqNumFrames(b), periods=1:acqNumPeriodsPerFrame(b),
                   receivers=1:rxNumChannels(b))

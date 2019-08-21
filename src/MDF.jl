@@ -1,7 +1,3 @@
-using HDF5
-
-import HDF5: h5read
-
 export MDFFile, MDFFileV1, MDFFileV2, addTrailingSingleton, addLeadingSingleton
 
 abstract type MDFFile <: MPIFile end
@@ -119,7 +115,15 @@ studyUuid(f::MDFFileV1) = nothing
 studyUuid(f::MDFFileV2) = str2uuid(f["/study/uuid"])
 studyDescription(f::MDFFileV1) = "n.a."
 studyDescription(f::MDFFileV2) = f["/study/description"]
-
+function studyTime(f::MDFFile)
+  t = f["/study/time"]
+  if typeof(t)==String
+   return DateTime(t)
+  else
+   return nothing
+  end
+end
+  
 # experiment parameters
 experimentName(f::MDFFileV1) = "n.a."
 experimentName(f::MDFFileV2) = f["/experiment/name"]
