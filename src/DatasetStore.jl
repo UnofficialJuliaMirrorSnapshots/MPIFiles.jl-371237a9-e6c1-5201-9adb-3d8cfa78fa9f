@@ -118,7 +118,6 @@ end
 function getExperiment(path::String)
 
   prefix, ext = splitext(path)
-
   if isdir(path) #Ugly
     p = path
     b = MPIFiles.BrukerFileFast(path) #use fast path for BrukerFiles
@@ -274,7 +273,9 @@ end
     candidatePaths = split(read(`find $path -maxdepth $maxdepth -mindepth $mindepth -type d`,String),"\n")[1:end-1]
     mask = zeros(Bool,length(candidatePaths))
     for (i,candidatePath) in enumerate(candidatePaths)
-      if isfile(joinpath(candidatePath,"acqp"))
+      if isfile(joinpath(candidatePath,"acqp")) &&
+         isfile(joinpath(candidatePath,"method")) &&
+         isfile(joinpath(candidatePath,"visu_pars"))
         mask[i] = true
       end
     end
@@ -287,7 +288,9 @@ else
     for file in files
       if isdir(joinpath(path,file))
        try
-        if isfile(joinpath(path,file,"acqp"))
+        if isfile(joinpath(path,file,"acqp")) &&
+           isfile(joinpath(candidatePath,"method")) &&
+           isfile(joinpath(candidatePath,"visu_pars"))
           push!(bfiles, joinpath(path,file))
         else
           rfiles = findBrukerFiles(joinpath(path,file))
@@ -468,13 +471,13 @@ function getExperiments(d::BrukerDatasetStore, s::Study)
   experiments = Experiment[]
 
   for file in files
-    #try
+    try
       exp = getExperiment(file)
 
       push!(experiments, exp)
-    #catch e
-    #  @debug "" e
-    #end
+    catch e
+      @debug "" e
+    end
   end
   return experiments
 end
