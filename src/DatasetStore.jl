@@ -203,7 +203,9 @@ function getStudy(d::BrukerDatasetStore, studyfolder::String)
         # name = string(latin1toutf8(j["SUBJECT_name_string"]),
         #              "_",latin1toutf8(j["SUBJECT_study_name"]),
         #              "_",latin1toutf8(j["SUBJECT_study_nr"]))
-        subject = latin1toutf8(j["SUBJECT_id"])*latin1toutf8(j["SUBJECT_name_string"])
+        s1 = latin1toutf8(j["SUBJECT_id"])
+	s2 = latin1toutf8(j["SUBJECT_name_string"])
+        subject = (s1 == s2) ? s1 : s1*s2
       else
         # Workaround if no subject file is present => use first dataset
         # and derive the study from the Brukerfile
@@ -323,9 +325,9 @@ function findSFFiles(d::BrukerDatasetStore)
       end
     end
   end
-  BrukerMDFSFs = readdir(joinpath(d.path,"MDF_SFs/"))
+  BrukerMDFSFs = readdir("/opt/data/MDF_SFs/")
   for BrukerMDFSF in BrukerMDFSFs
-    push!(bfiles,joinpath(d.path,"MDF_SFs/",BrukerMDFSF))
+    push!(bfiles,joinpath("/opt/data/MDF_SFs/",BrukerMDFSF))
   end
   return bfiles
 end
@@ -386,14 +388,13 @@ function generateSFDatabase(fileList::Vector)
 
   for (k,sf) in enumerate(fileList)
     i=k+1
-    _innerGenerateSFDatabase(A,i,sf)
+    b = MPIFile(sf)
+    _innerGenerateSFDatabase(A,i,sf,b)
   end
   return A
 end
 
-function _innerGenerateSFDatabase(A,i,sf)
-  #b = BrukerFileFast(sf)
-  b = MPIFile(sf)
+function _innerGenerateSFDatabase(A,i,sf,b)
   A[i,1] = experimentName(b)
   A[i,2] = maximum(acqGradient(b))
   df = vec(dfStrength(b)).*1e3
@@ -410,9 +411,9 @@ function _innerGenerateSFDatabase(A,i,sf)
   A[i,11] = tracerBatch(b)[1]
   A[i,12] = 0.0#deltaSampleConcentration(b)
   A[i,13] = 0.0#deltaSampleVolume(b)
-  A[i,14]= filepath(b)
-  A[i,15]= string(acqStartTime(b))
-  A[i,16]= 0.0#b["PVM_ScanTimeStr"]
+  A[i,14] = sf #filepath(b)
+  A[i,15] = string(acqStartTime(b))
+  A[i,16] = 0.0#b["PVM_ScanTimeStr"]
 end
 
 function generateSFDatabase(d::MDFDatasetStore)
@@ -432,9 +433,9 @@ function generateSFDatabase_(d::DatasetStore, oldfile, newfile)
 
   if isfile(newfile)
     if isfile(oldfile)
-      mv(newfile, oldfile, force=true)
+      cp(newfile, oldfile, force=true)
     else
-      mv(newfile, oldfile, force=false)
+      cp(newfile, oldfile, force=false)
     end
   end
 
