@@ -69,7 +69,7 @@ export rxNumChannels, rxBandwidth, rxNumSamplingPoints,
 
 # measurements
 export measData, measDataTDPeriods, measIsFourierTransformed, measIsTFCorrected,
-       measIsBGCorrected, measIsTransposed,
+       measIsBGCorrected, measIsFastFrameAxis,
        measIsFramePermutation, measIsFrequencySelection,
        measIsBGFrame, measIsSpectralLeakageCorrected, measFramePermutation,
        measFrequencySelection, measIsBasisTransformed, measIsCalibProcessed
@@ -165,7 +165,7 @@ abstract type MPIFile end
 @mustimplement measIsTFCorrected(f::MPIFile)
 @mustimplement measIsFrequencySelecton(f::MPIFile)
 @mustimplement measIsBGCorrected(f::MPIFile)
-@mustimplement measIsTransposed(f::MPIFile)
+@mustimplement measIsFastFrameAxis(f::MPIFile)
 @mustimplement measIsFramePermutation(f::MPIFile)
 @mustimplement measIsBGFrame(f::MPIFile)
 @mustimplement measFramePermutation(f::MPIFile)
@@ -227,10 +227,25 @@ function MPIFile(filename::AbstractString; kargs...)
   end
 end
 
+function show(io::IO, f::MPIFile)
+  print(io,supertype(typeof(f)))
+  print(io,"\n\tStudy: ")
+  show(io, studyName(f))
+  print(io,", ")
+  show(io,studyTime(f))
+  print(io,"\n\tExperiment: ")
+  show(io,experimentName(f))
+  print(io,", ")
+  show(io,acqStartTime(f))
+  print(io,"\n")
+end
+
 # Opens a set of MPIFiles
 function MPIFile(filenames::Vector)
   return map(x->MPIFile(x),filenames)
 end
+
+Base.length(f::MPIFile) = 1
 
 include("TransferFunction.jl")
 include("MultiMPIFile.jl")

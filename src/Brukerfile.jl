@@ -31,6 +31,7 @@ mutable struct BrukerFileMeas <: BrukerFile
   maxEntriesAcqp::Int
   keylistAcqp::Vector{String}
   keylistMethod::Vector{String}
+  pretendToBeSinglePatch::Bool
 end
 
 mutable struct BrukerFileCalib <: BrukerFile
@@ -47,6 +48,7 @@ mutable struct BrukerFileCalib <: BrukerFile
   maxEntriesAcqp::Int
   keylistAcqp::Vector{String}
   keylistMethod::Vector{String}
+  pretendToBeSinglePatch::Bool
 end
 
 function _iscalib(path::AbstractString)
@@ -70,7 +72,7 @@ function _iscalib(path::AbstractString)
     return calib
 end
 
-function BrukerFile(path::String; isCalib=_iscalib(path), fastMode=false)
+function BrukerFile(path::String; isCalib=_iscalib(path), fastMode=false, pretendToBeSinglePatch=false)
   if fastMode
     maxEntriesAcqp = 400
 	  keylistAcqp = ["ACQ_scan_name", "ACQ_size", "ACQ_jobs","ACQ_MPI_drive_field_strength",
@@ -90,10 +92,12 @@ function BrukerFile(path::String; isCalib=_iscalib(path), fastMode=false)
 
   if isCalib
     return BrukerFileCalib(path, params, paramsProc, false, false, false,
-               false, false, false, false, maxEntriesAcqp, keylistAcqp, keylistMethod)
+               false, false, false, false, maxEntriesAcqp, keylistAcqp, 
+               keylistMethod, pretendToBeSinglePatch)
   else
     return BrukerFileMeas(path, params, paramsProc, false, false, false,
-               false, false, false, false, maxEntriesAcqp, keylistAcqp, keylistMethod)
+               false, false, false, false, maxEntriesAcqp, keylistAcqp, 
+               keylistMethod, pretendToBeSinglePatch)
   end
 end
 
@@ -101,7 +105,7 @@ function BrukerFile()
   params = JcampdxFile()
   paramsProc = JcampdxFile()
   return BrukerFileMeas("", params, paramsProc, false, false, false,
-             false, false, false, false, 1, String[], String[])
+             false, false, false, false, 1, String[], String[], false)
 end
 
 BrukerFileFast(path) = BrukerFile(path, fastMode=true)
@@ -159,10 +163,6 @@ function getindex(b::BrukerFile, parameter, procno::Int64)#::String
   end
 
   return b.paramsProc[parameter]
-end
-
-function Base.show(io::IO, b::BrukerFile)
-  print(io, "BrukerFile: ", b.path)
 end
 
 # Helper
@@ -265,13 +265,21 @@ function acqNumFrames(b::BrukerFileCalib)
 end
 
 function acqNumPatches(b::BrukerFile)
-  M = b["MPI_NSteps"]
-  return (M == "") ? 1 : parse(Int64,M)
+  if b.pretendToBeSinglePatch
+    return 1
+  else
+    M = b["MPI_NSteps"]
+    return (M == "") ? 1 : parse(Int64,M)
+  end
 end
 function acqNumPeriodsPerFrame(b::BrukerFile)
-  M = b["MPI_RepetitionsPerStep"]
-  N = acqNumPatches(b)
-  return (M == "") ? N : N*parse(Int64,M)
+  if b.pretendToBeSinglePatch
+    return 1
+  else
+    M = b["MPI_RepetitionsPerStep"]
+    N = acqNumPatches(b)
+    return (M == "") ? N : N*parse(Int64,M)
+  end
 end
 
 acqNumAverages(b::BrukerFileMeas) = parse(Int,b["NA"])
@@ -376,7 +384,7 @@ function rawDataLengthConsistent(b::BrukerFile)
 
   M = filesize(dataFilename)
   if N != M
-    @show N M
+    @warn "raw data length inconsistent N != M" N M
   end
   return N == M
 end
@@ -525,8 +533,8 @@ measIsBGCorrected(b::BrukerFileMeas) = false
 # We have it, but by default we pretend that it is not applied
 measIsBGCorrected(b::BrukerFileCalib) = false
 
-measIsTransposed(b::BrukerFileMeas) = false
-measIsTransposed(b::BrukerFileCalib) = measIsCalibProcessed(b)
+measIsFastFrameAxis(b::BrukerFileMeas) = false
+measIsFastFrameAxis(b::BrukerFileCalib) = true
 
 measIsFramePermutation(b::BrukerFileMeas) = false
 measIsFramePermutation(b::BrukerFileCalib) = measIsCalibProcessed(b)
