@@ -5,7 +5,7 @@ const axes = Base.axes
 using Graphics: @mustimplement
 using HDF5
 using Interpolations
-using RegularizedLeastSquares
+using SparsityOperators
 using Reexport
 using UUIDs
 
@@ -64,7 +64,7 @@ export dfNumChannels, dfStrength, dfPhase, dfBaseFrequency, dfCustomWaveform,
 
 # receiver parameters
 export rxNumChannels, rxBandwidth, rxNumSamplingPoints,
-       rxTransferFunction, rxHasTransferFunction, rxUnit, 
+       rxTransferFunction, rxHasTransferFunction, rxUnit,
        rxDataConversionFactor, rxInductionFactor
 
 # measurements
@@ -72,7 +72,7 @@ export measData, measDataTDPeriods, measIsFourierTransformed, measIsTFCorrected,
        measIsBGCorrected, measIsFastFrameAxis,
        measIsFramePermutation, measIsFrequencySelection,
        measIsBGFrame, measIsSpectralLeakageCorrected, measFramePermutation,
-       measFrequencySelection, measIsBasisTransformed, measIsCalibProcessed
+       measFrequencySelection, measIsSparsityTransformed, measIsCalibProcessed
 
 # calibrations
 export calibSNR, calibFov, calibFovCenter, calibSize,
@@ -169,7 +169,7 @@ abstract type MPIFile end
 @mustimplement measIsFramePermutation(f::MPIFile)
 @mustimplement measIsBGFrame(f::MPIFile)
 @mustimplement measFramePermutation(f::MPIFile)
-@mustimplement measIsBasisTransformed(f::MPIFile)
+@mustimplement measIsSparsityTransformed(f::MPIFile)
 @mustimplement measIsCalibProcessed(b::MPIFile)
 
 # calibrations

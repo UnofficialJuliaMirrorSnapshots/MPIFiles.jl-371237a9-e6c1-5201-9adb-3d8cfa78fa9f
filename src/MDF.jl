@@ -89,7 +89,7 @@ end
 
 # general parameters
 version(f::MDFFile)::VersionNumber = VersionNumber( f["/version"] )
-uuid(f::MDFFile)::UUID = str2uuid(f["/uuid"])
+uuid(f::MDFFile)::UUID = UUID(f["/uuid"])
 time(f::MDFFileV1)::DateTime = DateTime( f["/date"] )
 time(f::MDFFileV2)::DateTime = DateTime( f["/time"] )
 
@@ -98,7 +98,7 @@ studyName(f::MDFFile)::String = f["/study/name"]
 studyNumber(f::MDFFileV1)::Int = 0
 studyNumber(f::MDFFileV2)::Int = f["/study/number"]
 studyUuid(f::MDFFileV1) = nothing
-studyUuid(f::MDFFileV2) = str2uuid(f["/study/uuid"])
+studyUuid(f::MDFFileV2) = UUID(f["/study/uuid"])
 studyDescription(f::MDFFileV1)::String = "n.a."
 studyDescription(f::MDFFileV2)::String = f["/study/description"]
 function studyTime(f::MDFFile)
@@ -116,7 +116,7 @@ experimentName(f::MDFFileV2)::String = f["/experiment/name"]
 experimentNumber(f::MDFFileV1)::Int64 = parse(Int64, f["/study/experiment"])
 experimentNumber(f::MDFFileV2)::Int64 = f["/experiment/number"]
 experimentUuid(f::MDFFileV1) = nothing
-experimentUuid(f::MDFFileV2) = str2uuid(f["/experiment/uuid"])
+experimentUuid(f::MDFFileV2) = UUID(f["/experiment/uuid"])
 experimentDescription(f::MDFFileV1)::String = f["/study/description"]
 experimentDescription(f::MDFFileV2)::String = f["/experiment/description"]
 experimentSubject(f::MDFFileV1)::String = f["/study/subject"]
@@ -317,20 +317,7 @@ function systemMatrix(f::MDFFileV2, rows, bgCorrection=true)
     return nothing
   end
 
-  if measIsFrequencySelection(f)
-    # In this case we need to convert indices
-    tmp = zeros(Int64, rxNumFrequencies(f), rxNumChannels(f) )
-    idxAvailable = measFrequencySelection(f)
-    for d=1:rxNumChannels(f)
-      tmp[idxAvailable, d] = (1:length(idxAvailable)) .+ (d-1)*length(idxAvailable)
-    end
-    rows_ = vec(tmp)[rows]
-    if findfirst(x -> x == 0, rows_) != nothing
-      @error "Indices applied to systemMatrix are not available in the file"
-    end
-  else
-    rows_ = rows
-  end
+  rows_ = rowsToSubsampledRows(f, rows)
 
   data_ = reshape(f.mmap_measData, size(f.mmap_measData,1),
                                    size(f.mmap_measData,2)*size(f.mmap_measData,3),
@@ -339,19 +326,19 @@ function systemMatrix(f::MDFFileV2, rows, bgCorrection=true)
 
   fgdata = data[measFGFrameIdx(f),:]
 
-  if measIsBasisTransformed(f)
+  if measIsSparsityTransformed(f)
     dataBackTrafo = similar(fgdata, prod(calibSize(f)), size(fgdata,2))
-    B = linearOperator(f["/measurement/basisTransformation"], calibSize(f))
+    B = linearOperator(f["/measurement/sparsityTransformation"], calibSize(f))
 
-    tmp = f["/measurement/basisIndices"]
-    basisIndices_ = reshape(tmp, size(tmp,1),
+    tmp = f["/measurement/subsamplingIndices"]
+    subsamplingIndices_ = reshape(tmp, size(tmp,1),
                                      size(tmp,2)*size(tmp,3),
                                      size(tmp,4))[:, rows_, :]
-    basisIndices = reshape(basisIndices_, Val(2))
+    subsamplingIndices = reshape(subsamplingIndices_, Val(2))
 
     for l=1:size(fgdata,2)
       dataBackTrafo[:,l] .= 0.0
-      dataBackTrafo[basisIndices[:,l],l] .= fgdata[:,l]
+      dataBackTrafo[subsamplingIndices[:,l],l] .= fgdata[:,l]
       dataBackTrafo[:,l] .= adjoint(B) * vec(dataBackTrafo[:,l])
     end
     fgdata = dataBackTrafo
@@ -433,10 +420,10 @@ measIsFrequencySelection(f::MDFFileV1) = false
 measIsFrequencySelection(f::MDFFileV2) = Bool(f["/measurement/isFrequencySelection"])
 measFrequencySelection(f::MDFFileV2) = f["/measurement/frequencySelection"]
 
-measIsBasisTransformed(f::MDFFileV1) = false
-function measIsBasisTransformed(f::MDFFileV2)
-  if exists(f.file, "/measurement/isBasisTransformed")
-    Bool(f["/measurement/isBasisTransformed"])
+measIsSparsityTransformed(f::MDFFileV1) = false
+function measIsSparsityTransformed(f::MDFFileV2)
+  if exists(f.file, "/measurement/isSparsityTransformed")
+    Bool(f["/measurement/isSparsityTransformed"])
   else
     return false
   end

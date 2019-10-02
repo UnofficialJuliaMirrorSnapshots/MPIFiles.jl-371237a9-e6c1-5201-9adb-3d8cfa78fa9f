@@ -8,6 +8,9 @@ fnMeasV2 = "./data/mdf/measurement_V2.mdf"
 fnSMV1 = "./data/mdf/systemMatrix_V1.mdf"
 fnSMV2 = "./data/mdf/systemMatrix_V2.mdf"
 fnSMV3 = "./data/mdf/systemMatrix_V3.mdf"
+fnSMV4 = "./data/mdf/systemMatrix_V4.mdf"
+fnSMV5 = "./data/mdf/systemMatrix_V5.mdf"
+fnSMV6 = "./data/mdf/systemMatrix_V6.mdf"
 fnSM1DV1 = "./data/mdf/systemMatrix1D_V1.mdf"
 fnSM1DV2 = "./data/mdf/systemMatrix1D_V2.mdf"
 
@@ -25,6 +28,7 @@ for mdf in (measBruker,mdfv2)
   @test studyDescription(mdf) == "n.a."
   @test studyTime(mdf) == DateTime( "2015-09-15T10:21:10.992" )
   @test studyUuid(mdf) == UUID("fe9635e0-7cfc-44eb-9f5a-585013a2cb51")
+  @test uuid_version(studyUuid(mdf)) == 4
 
   @test experimentName(mdf) == "fuenf (E18)"
   @test experimentNumber(mdf) == 18
@@ -33,6 +37,7 @@ for mdf in (measBruker,mdfv2)
   @test experimentIsSimulation(mdf) == false
   @test experimentIsCalibration(mdf) == false
   @test experimentUuid(mdf) == UUID("ef2110b5-cce8-4ca6-b041-38ea01254c47")
+  @test uuid_version(experimentUuid(mdf)) == 4
 
   @test scannerFacility(mdf) == "Universitätsklinikum Hamburg Eppendorf"
   @test scannerOperator(mdf) == "nmrsu"
@@ -168,6 +173,43 @@ S_loadedfromraw = getMeasurementsFD(smBrukerPretendToBeMeas,
 S_loadedfromproc = systemMatrix(smBruker)
 
 @test norm(vec(S_loadedfromraw-S_loadedfromproc)) / norm(vec(S_loadedfromproc)) < 1e-6
+
+# Compression of calib files
+
+
+compressCalibMDF(fnSMV4, smv2, SNRThresh=0.0)
+smv4 = MPIFile(fnSMV4)
+@test size(calibSNR(smv4), 1) == 817
+@test length(filterFrequencies(smv4)) == 817*3
+
+
+compressCalibMDF(fnSMV5, smv2, SNRThresh=4.0)
+smv5 = MPIFile(fnSMV5)
+@test size(calibSNR(smv5), 1) == 110
+@test length(filterFrequencies(smv5)) == 110*3
+@test length(filterFrequencies(smv5, SNRThresh=4.0)) == 194
+
+@test size(measData(smv5)) == (1959, 110, 3, 1)
+
+
+freq = filterFrequencies(smv5, SNRThresh=4.0)
+S1 = getSystemMatrix(smv5, freq)
+@test size(S1)  == (1936,194)
+
+S2 = getSystemMatrix(smv2, freq)
+@test S1  == S2
+
+compressCalibMDF(fnSMV6, smv2, SNRThresh=4.0, sparsityTrafoRedFactor=0.2)
+smv6 = MPIFile(fnSMV6)
+
+S1 = getSystemMatrix(smv6, freq)
+  
+relativeDeviation = zeros(Float32,length(freq))
+for f in 1:length(freq)
+  relativeDeviation[f] = norm(S1[:,f]-S2[:,f])/norm(S2[:,f])
+end
+# test if relative deviation for most of the frequency components is below 0.003
+@test quantile(relativeDeviation,0.95)<0.14
 
 
 # Calibration file 1D
